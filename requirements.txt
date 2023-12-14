@@ -1,0 +1,6 @@
+segment_anything_hq
+timm
+torch
+torchvision
+numpy
+opencv-python
