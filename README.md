@@ -1,6 +1,8 @@
 Convert YOLO bboxes to polygons automatically using SAM!
 
-You will need the SAM-HQ-vit-h weights from here https://huggingface.co/lkeab/hq-sam/tree/main, put the file in the root here.
+![bbox_to_polygons_banner](https://github.com/stephansturges/yolobbox2polygon/assets/20320678/95778f01-af19-4422-b4c6-3d5f00294c90)
+
+You will need the SAM-HQ-vit-h weights from here https://huggingface.co/lkeab/hq-sam/tree/main, put the file in the root here. Follow their license!
 
 Install dependencies.
 
@@ -11,7 +13,6 @@ Run the python script.
 And you're done! Nice clean bounding polygons from your bounding boxes.
 
 Merry Christmas!
-
 
 
 Copyright 2023 Stephan Sturges
