@@ -178,7 +178,7 @@ def main():
     print("CUDA is available:", torch.cuda.is_available())
 
     
-    bbox_dataset = './yolo_dataset/exerpt/'
+    bbox_dataset = './yolo_dataset/'
     seg_dataset = './segmentation_dataset'
     image_files = glob.glob(f"./{bbox_dataset}/**/*", recursive=True)
     image_files = [f for f in image_files if f.lower().endswith(('.jpg', '.png'))]
