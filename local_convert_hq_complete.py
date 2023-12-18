@@ -207,7 +207,7 @@ def main():
 
     predictor = SamPredictor(sam)
 
-    device = "cuda"
+    device = "cuda:1" # SET THIS TO USE WHATEVER GPU YOU WANT TO USE. 0-INDEXED
 
     samgpu = sam_model_registry[model_type](checkpoint=sam_checkpoint)
 
@@ -227,165 +227,169 @@ def main():
             label_file = imgPath.split('/')[-1].split('.')[0]
             print(f'{label_file} already exists in {destination}')
             continue
-        labels = getLabels(labelPath)
-        print("image name:")
-        print(imgPath)
-
-
-        if labels == []:
-            pass
-        else:
-            raw_image = Image.open(imgPath).convert("RGB")
-
-            image = cv2.imread(imgPath, cv2.IMREAD_COLOR)
-            image = enhance_image_to_HDR(image)
-            image = cv2.GaussianBlur(image, (15, 15), 0)
-            image = adjust_gamma(image, 1.4)
-            image = cv2.resize(image, None, fx=0.5, fy=0.5)
-            image = cv2.add(image, np.array([30.0])) # up brightness by 30
-            
-
-            try:
-                predictorgpu.set_image(image)
-                h, w = image.shape[:2]
-                class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
-                #show_boxes_on_image(raw_image, bounding_boxes) 
-                input_boxes = torch.tensor(bounding_boxes, device=predictorgpu.device)
-                transformed_boxes = predictorgpu.transform.apply_boxes_torch(input_boxes, image.shape[:2])
-                
-
-                masks, _, low_rez_first_iteration_logits = predictorgpu.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
-                    boxes=transformed_boxes,
-                    multimask_output=False,
-                )
-                print("ran inference on GPU")
-            except Exception as e:
-                print("Failed inference on GPU with: ")
-                print(e)
-                continue
-                predictor.set_image(image)
-                h, w = image.shape[:2]
-                class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
-                #show_boxes_on_image(raw_image, bounding_boxes) 
-                input_boxes = torch.tensor(bounding_boxes, device=predictor.device)
-
-                transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, image.shape[:2])
-                masks, _, low_rez_first_iteration_logits = predictor.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
-                    boxes=transformed_boxes,
-                    multimask_output=False,
-                )
-                print("ran inference on CPU !!!")
-                
-
-            torch.cuda.empty_cache()
-            gc.collect()
-
-
-            # IMPORTANT: we are first creating a rough mask with the HQ model within the size of the bbox
-            # then using that mask as a low rez input to a second iteration of the same model with a growth
-            # factor set up on the bounding box. The reason for this is to "grab" things that are slighty
-            # on the edge of the original bounding box. We are using a "single mask" return because
-            # multi-mask seems to look for too much detail on the model, and doesn't perform as well
-            # in testing... tbd whether this can be improved in the future!
-
-            image = cv2.imread(imgPath, cv2.IMREAD_COLOR)
-            image = enhance_image_to_HDR(image)
-            image = cv2.GaussianBlur(image, (5, 5), 0)
-            image = adjust_gamma(image, 1.4)
-            
-            try:
-                predictorgpu.set_image(image)
-                h, w = image.shape[:2]
-                class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
-                #show_boxes_on_image(raw_image, bounding_boxes) 
-                input_boxes = torch.tensor(bounding_boxes, device=predictorgpu.device)
-                transformed_boxes = predictorgpu.transform.apply_boxes_torch(input_boxes, image.shape[:2])
-                masks, _, _ = predictorgpu.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
-                    boxes=transformed_boxes,
-                    multimask_output=False,
-                    mask_input=low_rez_first_iteration_logits,
-                )
-
-                print("ran inference on GPU")
-            except Exception as e:
-                print("Failed inference on GPU with: ")
-                print(e)
-                continue
-                predictor.set_image(image)
-                h, w = image.shape[:2]
-                class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
-                #show_boxes_on_image(raw_image, bounding_boxes) 
-                input_boxes = torch.tensor(bounding_boxes, device=predictor.device)
-                
-                transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, image.shape[:2])
-                masks, _, _ = predictor.predict_torch(
-                    point_coords=None,
-                    point_labels=None,
-                    boxes=transformed_boxes,
-                    multimask_output=False,
-                    mask_input=low_rez_first_iteration_logits,
-                )
-                print("ran inference on CPU !!!!!!")
-            
-
-
-            print("made masks and there are X:")
-            print(str(len(masks)))
-            for i,mask in enumerate(masks):
-                print("working on mask No: " + str(i))
-                binary_mask = masks[i].squeeze().cpu().numpy().astype(np.uint8)
-                contours, hierarchy = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                try:
-                    # Sorting the contours by area and selecting the top 3
-                    largest_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:1] #sorted as if we take top X and stack but no longer doing this
-
-                    # Merging the top 3 contours together
-                    merged_contour = np.vstack(largest_contours)
-                    segmentation = merged_contour.flatten().tolist()
-                    mask = segmentation
-
-                    # convert mask to numpy array of shape (N,2)
-                    mask = np.array(mask).reshape(-1, 2)
-
-                    # normalize the pixel coordinates
-                    mask_norm = mask / np.array([w, h])
-                    class_id = class_ids[i]
-                    yolo = mask_norm.reshape(-1)
-
-                    # if folder does not exist, create it
-                    if not os.path.exists(destination):
-                        os.makedirs(destination)
-                
-                except Exception as e:
-                    print(str(e))
-                    continue
-
-
-                print(f'writing segmentation file in {label_file} to {destination}')
-                # create labels folder if it does not exist
-                # if not os.path.exists(os.path.join(destination, 'labels')):
-                #     os.makedirs(os.path.join(destination, 'labels'))
-                with open(seg_label_path, "a") as f:
-                    for val in yolo:
-                        print("{} {:.6f}".format(class_id,val))
-                        f.write("{} {:.6f}".format(class_id,val))
-                    f.write("\n")
+        try:
+            labels = getLabels(labelPath)
+            print("image name:")
+            print(imgPath)
     
-            torch.cuda.empty_cache()
-            gc.collect()
-
-            # create images folder if it does not exist
-            if not os.path.exists(os.path.join(destination, 'images')):
-                os.makedirs(os.path.join(destination, 'images'))
-            # copy image to destination/images
-            # strip faulty extensions
-            shutil.copy(imgPath, f'{destination}/images/{os.path.basename(os.path.splitext(os.path.splitext(imgPath)[0])[0]) + os.path.splitext(imgPath)[1]}')
-
+    
+            if labels == []:
+                pass
+            else:
+                raw_image = Image.open(imgPath).convert("RGB")
+    
+                image = cv2.imread(imgPath, cv2.IMREAD_COLOR)
+                image = enhance_image_to_HDR(image)
+                image = cv2.GaussianBlur(image, (15, 15), 0)
+                image = adjust_gamma(image, 1.4)
+                image = cv2.resize(image, None, fx=0.5, fy=0.5)
+                image = cv2.add(image, np.array([30.0])) # up brightness by 30
+                
+    
+                try:
+                    predictorgpu.set_image(image)
+                    h, w = image.shape[:2]
+                    class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
+                    #show_boxes_on_image(raw_image, bounding_boxes) 
+                    input_boxes = torch.tensor(bounding_boxes, device=predictorgpu.device)
+                    transformed_boxes = predictorgpu.transform.apply_boxes_torch(input_boxes, image.shape[:2])
+                    
+    
+                    masks, _, low_rez_first_iteration_logits = predictorgpu.predict_torch(
+                        point_coords=None,
+                        point_labels=None,
+                        boxes=transformed_boxes,
+                        multimask_output=False,
+                    )
+                    print("ran inference on GPU")
+                except Exception as e:
+                    print("Failed inference on GPU with: ")
+                    print(e)
+                    continue
+                    predictor.set_image(image)
+                    h, w = image.shape[:2]
+                    class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
+                    #show_boxes_on_image(raw_image, bounding_boxes) 
+                    input_boxes = torch.tensor(bounding_boxes, device=predictor.device)
+    
+                    transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, image.shape[:2])
+                    masks, _, low_rez_first_iteration_logits = predictor.predict_torch(
+                        point_coords=None,
+                        point_labels=None,
+                        boxes=transformed_boxes,
+                        multimask_output=False,
+                    )
+                    print("ran inference on CPU !!!")
+                    
+    
+                torch.cuda.empty_cache()
+                gc.collect()
+    
+    
+                # IMPORTANT: we are first creating a rough mask with the HQ model within the size of the bbox
+                # then using that mask as a low rez input to a second iteration of the same model with a growth
+                # factor set up on the bounding box. The reason for this is to "grab" things that are slighty
+                # on the edge of the original bounding box. We are using a "single mask" return because
+                # multi-mask seems to look for too much detail on the model, and doesn't perform as well
+                # in testing... tbd whether this can be improved in the future!
+    
+                image = cv2.imread(imgPath, cv2.IMREAD_COLOR)
+                image = enhance_image_to_HDR(image)
+                image = cv2.GaussianBlur(image, (5, 5), 0)
+                image = adjust_gamma(image, 1.4)
+                
+                try:
+                    predictorgpu.set_image(image)
+                    h, w = image.shape[:2]
+                    class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
+                    #show_boxes_on_image(raw_image, bounding_boxes) 
+                    input_boxes = torch.tensor(bounding_boxes, device=predictorgpu.device)
+                    transformed_boxes = predictorgpu.transform.apply_boxes_torch(input_boxes, image.shape[:2])
+                    masks, _, _ = predictorgpu.predict_torch(
+                        point_coords=None,
+                        point_labels=None,
+                        boxes=transformed_boxes,
+                        multimask_output=False,
+                        mask_input=low_rez_first_iteration_logits,
+                    )
+    
+                    print("ran inference on GPU")
+                except Exception as e:
+                    print("Failed inference on GPU with: ")
+                    print(e)
+                    continue
+                    predictor.set_image(image)
+                    h, w = image.shape[:2]
+                    class_ids, bounding_boxes = getConvertedBoxes(labels, w, h, grow_factor=1)
+                    #show_boxes_on_image(raw_image, bounding_boxes) 
+                    input_boxes = torch.tensor(bounding_boxes, device=predictor.device)
+                    
+                    transformed_boxes = predictor.transform.apply_boxes_torch(input_boxes, image.shape[:2])
+                    masks, _, _ = predictor.predict_torch(
+                        point_coords=None,
+                        point_labels=None,
+                        boxes=transformed_boxes,
+                        multimask_output=False,
+                        mask_input=low_rez_first_iteration_logits,
+                    )
+                    print("ran inference on CPU !!!!!!")
+                
+    
+    
+                print("made masks and there are X:")
+                print(str(len(masks)))
+                for i,mask in enumerate(masks):
+                    print("working on mask No: " + str(i))
+                    binary_mask = masks[i].squeeze().cpu().numpy().astype(np.uint8)
+                    contours, hierarchy = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                    try:
+                        # Sorting the contours by area and selecting the top 3
+                        largest_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:1] #sorted as if we take top X and stack but no longer doing this
+    
+                        # Merging the top 3 contours together
+                        merged_contour = np.vstack(largest_contours)
+                        segmentation = merged_contour.flatten().tolist()
+                        mask = segmentation
+    
+                        # convert mask to numpy array of shape (N,2)
+                        mask = np.array(mask).reshape(-1, 2)
+    
+                        # normalize the pixel coordinates
+                        mask_norm = mask / np.array([w, h])
+                        class_id = class_ids[i]
+                        yolo = mask_norm.reshape(-1)
+    
+                        # if folder does not exist, create it
+                        if not os.path.exists(destination):
+                            os.makedirs(destination)
+                    
+                    except Exception as e:
+                        print(str(e))
+                        continue
+    
+    
+                    print(f'writing segmentation file in {label_file} to {destination}')
+                    # create labels folder if it does not exist
+                    # if not os.path.exists(os.path.join(destination, 'labels')):
+                    #     os.makedirs(os.path.join(destination, 'labels'))
+                    with open(seg_label_path, "a") as f:
+                        for val in yolo:
+                            print("{} {:.6f}".format(class_id,val))
+                            f.write("{} {:.6f}".format(class_id,val))
+                        f.write("\n")
+        
+                torch.cuda.empty_cache()
+                gc.collect()
+    
+                # create images folder if it does not exist
+                if not os.path.exists(os.path.join(destination, 'images')):
+                    os.makedirs(os.path.join(destination, 'images'))
+                # copy image to destination/images
+                # strip faulty extensions
+                shutil.copy(imgPath, f'{destination}/images/{os.path.basename(os.path.splitext(os.path.splitext(imgPath)[0])[0]) + os.path.splitext(imgPath)[1]}')
+        except Exception as e:
+           print(e)
+           pass
+ 
 if __name__ == "__main__":
     main()
