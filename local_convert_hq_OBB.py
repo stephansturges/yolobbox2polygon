@@ -232,7 +232,7 @@ def main():
 
     predictor = SamPredictor(sam)
 
-    device = "cuda:1" # SET THIS TO USE WHATEVER GPU YOU WANT TO USE. 0-INDEXED
+    device = "cuda:0" # SET THIS TO USE WHATEVER GPU YOU WANT TO USE. 0-INDEXED
 
     samgpu = sam_model_registry[model_type](checkpoint=sam_checkpoint)
 
@@ -366,40 +366,33 @@ def main():
 
 
                 yolo_OBB_labels = []
-                for i,mask in enumerate(masks):
+                for i, mask in enumerate(masks):
                     print("working on mask No: " + str(i))
                     binary_mask = masks[i].squeeze().cpu().numpy().astype(np.uint8)
                     contours, hierarchy = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    try:
-                        # Sorting the contours by area and selecting the top 3
-                        largest_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:1] #sorted as if we take top X and stack but no longer doing this
-                        print("got to here") 
-                        tight_bbox = get_tight_bounding_box(largest_contours[0], class_ids[i], h , w)
-                        
-                        #box = cv2.boxPoints(tight_bbox)
-                        #ibox = np.int0(box)
 
-                        # Flatten the box points and prepend the class_id
-                        #box_flat = box.flatten().tolist()
-                        
-                        print("tight bbox:")
-                        print(tight_bbox)
-                        
-                        yolo_OBB_labels.append(tight_bbox)
-                       
-                        print("yolo_OBB_labels :")
-                        print(yolo_OBB_labels)
+                    try:
+                        # Sorting the contours by area and selecting the top X
+                        X = 2  # Number of top contours to merge
+                        largest_contours = sorted(contours, key=cv2.contourArea, reverse=True)[:X]
+
+                        # Merge top X contours
+                        if largest_contours:
+                            merged_contour = np.vstack(largest_contours)
+                            tight_bbox = get_tight_bounding_box(merged_contour, class_ids[i], h, w)
+
+                            print("tight bbox:")
+                            print(tight_bbox)
+
+                            yolo_OBB_labels.append(tight_bbox)
+
+                            print("yolo_OBB_labels :")
+                            print(yolo_OBB_labels)
+
+                    except Exception as e:
+                        print(f"Error processing mask {i}: {e}")
                       
                      
-                    
-                   
-   
-  
- 
-
-
-
- 
 
     
                         # if folder does not exist, create it
