@@ -2,6 +2,12 @@ Convert YOLO bboxes to polygons automatically using SAM!
 
 ![bbox_to_polygons_banner](https://github.com/stephansturges/yolobbox2polygon/assets/20320678/95778f01-af19-4422-b4c6-3d5f00294c90)
 
+
+Or... Convert YOLO bboxes to object-aligned oriented bounding-boxes!
+
+![screenshot_from_2024-01-15_09-19-28](https://github.com/stephansturges/yolobbox2polygon/assets/20320678/4e15bd22-781a-4f99-ae20-bacbe304bf87)
+
+
 You will need the SAM-HQ-vit-h weights from here https://huggingface.co/lkeab/hq-sam/tree/main, put the file in the root here. Follow their license!
 
 Install dependencies.
